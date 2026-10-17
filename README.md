@@ -1,8 +1,9 @@
-# Logbook
+# RDKit logbook
 
-A running work logbook. Each entry is a dated directory under
-[`entries/`](entries/), named `YYYY-MM-DD-topic/`, holding a `README.md` with
-the writeup plus any assets (images, scripts, data) for that entry.
+A running work logbook for [RDKit](https://github.com/rdkit/rdkit). Each entry
+is a dated directory under [`entries/`](entries/), named `YYYY-MM-DD-topic/`,
+holding a `README.md` with the writeup plus any assets (images, scripts, data)
+for that entry.
 
 ## Conventions
 
@@ -119,11 +120,6 @@ can use, so each Markdown file states its license in the metadata block instead
 go install github.com/google/addlicense@v1.2.0
 addlicense -c "Steven Kearnes" -l apache <files>
 ```
-
-Third-party benchmark datasets and leaderboard exports (Polaris/ASAP,
-OpenADMET) are **not** redistributed here — they stay with their upstream
-sources under their own licenses, and entries link to where to fetch them.
-Results computed from those datasets are covered by this repo's license.
 
 [ord]: https://github.com/open-reaction-database
 
