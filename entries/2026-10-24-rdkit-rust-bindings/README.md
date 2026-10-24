@@ -15,8 +15,9 @@ author's own crate, built against conda-forge's RDKit, and is laid out to move
 into `rdkit/rdkit` once its patterns are settled. Decisions:
 
 - It binds RDKit's C++ and reimplements nothing.
-- The first release covers everything the Python extension modules expose.
-- The API mirrors RDKit the way the Python bindings do, in Rust spelling.
+- The first release covers everything RDKit's nanobind Python wrappers expose.
+  They, not the Boost.Python wrappers, are the reference.
+- The API mirrors RDKit the way the nanobind bindings do, in Rust spelling.
 - Users get RDKit from conda-forge, and the crate compiles its wrapper code
   against that install.
 - Wrapper code is written by hand, by agents, following patterns settled on a
@@ -61,7 +62,7 @@ The existing bindings stall for three reasons, and the design answers each:
 
 ## Goals
 
-- Every class, function, and method the Python extension modules expose has a
+- Every class, function, and method the nanobind Python modules expose has a
   Rust counterpart, or a recorded reason it has none.
 - A user needs an activated conda environment with RDKit's development packages,
   and `cargo add`. Nothing else is installed or configured by hand, beyond one
@@ -74,11 +75,11 @@ The existing bindings stall for three reasons, and the design answers each:
 
 - Reimplementing any RDKit algorithm in Rust.
 - The pure-Python parts of the `rdkit` package, such as `PandasTools` and the
-  `rdkit.Chem.Draw` helpers. Scope is what the compiled extension modules
+  `rdkit.Chem.Draw` helpers. Scope is what the compiled nanobind modules
   expose. *(My call, reading "what the Python wrappers cover" as the wrappers.)*
-- A redesigned, idiomatic Rust API. The redesign is
-  [`rdkit.v3`](../2026-10-17-rdkit-v3-mol/README.md), which is shaped for
-  mechanical binding; binding it is later work.
+- A redesigned, idiomatic Rust API. The redesign is `rdkit.v3`, whose
+  [molecule API](../2026-10-17-rdkit-v3-mol/README.md) is shaped for mechanical
+  binding; binding it is later work.
 - RDKit installs other than conda-forge's, for users. An override that points
   the build at a development build of RDKit is in scope, because developing the
   crate needs it.
@@ -177,14 +178,14 @@ is.
 
 ### What the API looks like
 
-It mirrors RDKit as the Python bindings do:
+It mirrors RDKit as the nanobind Python bindings do:
 
 - The same classes (`ROMol`, `RWMol`, `Atom`, `Bond`, `Conformer`, and so on)
   and the same functions in snake_case (`mol_from_smiles`, `get_atom_with_idx`).
 - Functions are grouped the way the Python modules group them, so Python code
-  ports line by line. Where the Python and C++ shapes differ (a C++ free
-  function bound as a Python method, logic that lives only in the Python
-  wrapper), the Python shape wins and the C++ wrapper layer reproduces that
+  ports line by line. Where the nanobind and C++ shapes differ (a C++ free
+  function bound as a Python method, logic that lives only in the nanobind
+  wrapper), the nanobind shape wins and the C++ wrapper layer reproduces that
   logic. *(My call.)*
 - Default and keyword arguments become parameter structs implementing
   `Default`, which RDKit's C++ is already moving toward.
@@ -197,13 +198,18 @@ It mirrors RDKit as the Python bindings do:
 
 ### Scope and parity
 
-The first release covers the compiled Python modules: 78 Boost.Python modules,
-about 250 classes, and about 2,350 `def` calls (methods and free functions,
-overloads counted separately), by a rough count of the wrapper sources.
+The first release covers RDKit's nanobind modules: 64 modules, about 237
+classes, and about 2,520 `def` calls (methods and free functions, overloads
+counted separately), by a rough count of the `nbWrap` sources. Every
+Boost.Python module has a nanobind counterpart at that commit.
 
-Parity is measured, not estimated. *(My call.)* A script introspects conda's
-compiled `rdkit` modules and writes an inventory of every class, method, and
-function. A checked-in manifest maps each entry to a Rust path, or to a reason
+Parity is measured, not estimated. *(My call.)* conda-forge's `rdkit` is built
+with Boost.Python, so the inventory comes from an RDKit build with
+`RDK_BUILD_NANOBIND_WRAPPERS` at the supported release. A script introspects
+its compiled modules and writes every class, method, and function to an
+inventory, regenerated once per RDKit release and checked in, so CI never
+builds RDKit to check parity. A checked-in manifest maps each entry to a Rust
+path, or to a reason
 it has none (for example, Python-only protocol methods such as `__repr__` or
 pickling hooks). APIs RDKit has deprecated are mapped to that reason rather than
 bound. *(My call.)* CI fails on an unmapped entry. Each module's Python wrapper
