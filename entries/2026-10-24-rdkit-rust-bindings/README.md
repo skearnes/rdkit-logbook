@@ -266,6 +266,6 @@ the rest of the crate copies:
 ## Next steps
 
 - Settle the open questions.
-- Plan the core slice: repository layout, build script, CI, and the patterns
-  listed under Build order.
-- Write the inventory script early, since it defines what done means.
+- Carry out the [core slice plan](assets/CORE_SLICE_PLAN.md): repository
+  layout, build script, CI, the inventory and manifest (written early, since
+  they define what done means), and the patterns listed under Build order.
