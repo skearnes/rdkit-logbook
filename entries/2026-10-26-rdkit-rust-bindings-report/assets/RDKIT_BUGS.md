@@ -11,9 +11,9 @@ RDKit's Python wrappers. None has been reported upstream yet. The crate guards
 against each one with a check, a lock, or by leaving the name unbound, as
 described in each entry.
 
-This page collects what was recorded while binding, and, in the last section,
-while porting RDKit's Python modules. The wrapper's comments are
-the full record: every check in `wrapper/src` says what RDKit would do without
+This page collects what was recorded while binding, during the pre-release
+review, and, in the last section, while porting RDKit's Python modules. The
+wrapper's comments are the full record: every check in `wrapper/src` says what RDKit would do without
 it, and every unbound name's entry in `inventory/manifest.toml` gives the
 reason and, where there is one, the crash in Python that confirmed it. Many
 smaller cases appear only there, such as RDKit trusting an index it is given or
@@ -96,9 +96,33 @@ a size it computes in `int`.
   *Crate:* checks.
 - **Python wrappers.** `MolChemicalFeatureFactory.GetMolFeature` keeps a
   function-static feature list shared across threads, which leaves features
-  dangling. `GetAtomMatch` indexes a `vector<bool>(maxAts)` without a bounds
-  check (`Code/GraphMol/MolChemicalFeatures/nbWrap`). *Crate:* its own
-  bindings avoid both.
+  dangling. `GetAtomMatch` indexes a bitset of `maxAts` bits without a bounds
+  check (`Code/GraphMol/MolChemicalFeatures/Wrap`, and the nanobind port as
+  well). `MurtaghCluster` reads `nPts * sz` values from its data without
+  checking that the array holds them. In the trajectory module,
+  `Trajectory.GetSnapshot` returns a copy that keeps a raw pointer to the
+  trajectory, which dangles once the trajectory is gone, and a `Snapshot`
+  with fewer coordinates than its trajectory's points is read past its end.
+  *Crate:* its own bindings avoid each.
+- **Molecule pickles RDKit did not write** (`Code/GraphMol/MolPickler.cpp`).
+  `MolPickler` takes a query's class from its tag and its matching function
+  from its description independently, and converts what it reads without
+  range checks, so a pickle RDKit did not write reaches undefined behavior
+  while it is read or later. One mutated byte in an `ExtendedQueryMol`'s JSON,
+  which holds molecule pickles in base64, segfaulted Python. RDKit fuzzes the
+  parsing of pickles, not what the parsed molecule then does. *Crate:* the
+  pickle readers are `unsafe fn`s whose contract is a pickle RDKit wrote,
+  and they keep the checks they have.
+- **Eigen's solvers on coordinates that are not finite.** Eigen's SVD and
+  eigensolvers leave their output uninitialized for input that is not finite,
+  and RDKit reads it; memcheck showed it in Python for `WHIM`, `PBF`, and
+  `GETAWAY`. `GETAWAY` and the EEM charges also divide by interatomic
+  distances, which are 0 for atoms at the same place, as embedding
+  `[Na+].[Cl-]` leaves them. *Crate:* refuses coordinates that are not finite
+  or beyond 1e9, and, for those two, atoms within 1e-6 of each other.
+- **InChI and tetrahedral centers with fewer than three neighbors.**
+  `MolToInchi` passes InChI two uninitialized neighbor indices for such a
+  center, such as `[C@H](F)Cl` from SMARTS. *Crate:* refuses one.
 - **The property-table descriptors read outside their tables**
   (`Code/GraphMol/Descriptors/MolData3Ddescriptors.cpp`). `AUTOCORR2D`,
   `AUTOCORR3D`, `RDF`, `MORSE`, `WHIM`, and `GETAWAY` look up atomic
@@ -195,6 +219,16 @@ in many calls, and C++ and Rust callers have no such lock.
 - **Drawing.** `DrawShapeArc::myDraw` steps its angles in `int` (undefined for
   NaN), and the SVG drawer converts contour colors that an infinite grid value
   makes NaN to `int`. *Crate:* checks.
+- **Conformer ids.** `addConformer` with `assignId` gives the new conformer
+  `maxId + 1` in `int`, which overflows when a conformer's id is `INT_MAX`.
+  *Crate:* refuses that, and ids above `i32::MAX`.
+- **Trajectory readers.** `readAmberTrajectory` and `readGromosTrajectory`
+  size each frame as `numPoints * 3` in `unsigned int`, which wraps for large
+  point counts, and then write `numPoints * 3` coordinates into the smaller
+  array. *Crate:* refuses such counts.
+- **`DistGeom.DoTriangleSmoothing`'s Python binding** computes
+  `nrows * nrows` in `int`, which overflows above 46,340 rows. *Crate:*
+  checks the size.
 - **The InChI writer narrows silently** (`External/INCHI-API/inchi.cpp`).
   Molecules of more than 32,766 atoms return an empty string, an isotope of
   70,000 becomes a wrong `/i` layer, and 256 explicit hydrogens become `CH4`.
@@ -211,7 +245,16 @@ in many calls, and C++ and Rust callers have no such lock.
   bonds checks first (rule P2).
 - **Comic-mode drawing.** `handdrawnLine` (`MolDraw2DDetails.cpp`) shrinks its
   wiggles until they are small next to the line's steps, which never ends for a
-  step of no length. *Crate:* refuses such lines.
+  step of no length. In a comic-mode reaction on a small canvas, the plus
+  signs' strokes (`plusWidth / 3`, in `int`) and the arrow's shaft can have
+  no length. *Crate:* refuses such lines.
+- **Feature definitions without `EndFeature`.** `parseFeatureDef`
+  (`Code/GraphMol/MolChemicalFeatures/FeatureParser.cpp`) rereads its last
+  line forever when a definition runs to the end of its input. *Crate:*
+  refuses such a definition.
+- **AMBER trajectories of no points.** `readAmberTrajectory` adds empty
+  snapshots forever, without reading on, for a trajectory of 0 points once
+  the file's title line ends in a newline. *Crate:* refuses 0 points.
 - **Atom labels.** `AtomSymbol::adjustColons` strips `<...>` in a loop that
   never ends once a `>` comes before the next `<`. *Crate:* checks labels.
 - **SMILES files whose stream reports its position but cannot seek.**
@@ -228,6 +271,19 @@ in many calls, and C++ and Rust callers have no such lock.
   exception in a worker thread calls `std::terminate`. *Crate:* runs the picks
   on the calling thread.
 
+## Unbounded allocation
+
+- **CDXML reaction atom maps.** One `ReactionStepAtomMap` token that is not an
+  `int`, such as `x` or `4294967295`, makes the ChemDraw library append until
+  memory runs out. *Crate:* refuses such a token.
+- **InChI isotopic hydrogens.** `/i1D200` wraps to -56 in InChI's
+  `signed char`; RDKit reads that as about 4.3 billion and adds that many
+  atoms. *Crate:* refuses H, D, or T counts of 128 or more.
+- **Real-valued vector and grid pickles.** `RealValueVect` and
+  `UniformRealValueGrid3D` allocate the length a pickle claims before reading
+  it, up to 32 GB from 8 bytes. *Crate:* refuses pickles that claim more
+  than they hold.
+
 ## Wrong results
 
 - **`ExtendedQueryMol::toBinary`** stores the number of tautomer queries in 16
@@ -240,6 +296,37 @@ in many calls, and C++ and Rust callers have no such lock.
 - **ACS 1996 drawing** sets its options from the mean bond length unchecked,
   so tiny bonds make the scale huge. *Crate:* checks the options it sets
   before drawing.
+
+## RDKit's Python wrappers
+
+conda-forge's Boost.Python wrappers, which the crate mirrors, have mistakes of
+their own. *Crate:* follows RDKit's C++ where they differ, and documents it.
+
+- **`CanonicalRankAtomsInFragment`** passes `includeChiralPresence` where
+  `rankFragmentAtoms` takes `includeAtomMaps`, and never passes
+  `includeChiralPresence` itself: by default it ranks without atom maps,
+  although its docstring says `includeAtomMaps=True`.
+- **Empty lists.** `pythonObjectToVect` and similar helpers test a list's
+  truth, so an empty list means `None` for `AddHs`' `onlyOnAtoms`,
+  `MolFragmentToSmiles`' `bondsToUse`, `FragmentOnBonds`' `bondTypes`, the
+  fingerprint generators' `countBounds`, `AssignCIPLabels`' atoms and bonds,
+  and `AlignPoints`' weights: an empty set of atoms or bonds is all of them.
+- **`PointND.Distance`** is bound to `Point3D`'s distance function, so it
+  raises for every `PointND`.
+- **Misnamed and missing keywords.** `rdGaussianShape.ShapeInput` names its
+  molecule `self` and gives its other three arguments no defaults, although
+  the C++ constructor has them. `FilterCatalog.AddEntry` names its parameters
+  `entry` and `updateFPLength`, one place off. `FeaturesValidation` spells a
+  keyword `allowDummmies`.
+- **Docstrings that disagree with the defaults.** The MHFP encoder's methods
+  are registered with `BOOST_PYTHON_FUNCTION_OVERLOADS`, so an omitted
+  `kekulize` takes the C++ function's default, true, although the docstring
+  says false.
+- **Duplicates.** `HasPropQueryBond` is registered three times.
+- **Substructure matches.** `HasSubstructMatch` and `GetSubstructMatch` set
+  `maxMatches = 1` on a copy of the parameters and then search with the
+  original, so they find up to `maxMatches` (1,000 by default) to report
+  one.
 
 ## RDKit's Python modules
 
