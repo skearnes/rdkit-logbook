@@ -256,7 +256,7 @@ GCC 16.2. Names live in `rdkit::v3` and `rdkit.v3` (Decision 6 of the
 
 - `stereo()` lists `StereoElement`s, each naming its own reference atoms:
   `TetrahedralStereo` gives its center, four neighbor slots (an empty slot is
-  an implicit hydrogen or lone pair), and `CLOCKWISE` or `ANTICLOCKWISE`;
+  an implicit hydrogen or lone pair), and `CLOCKWISE` or `COUNTERCLOCKWISE`;
   `DoubleBondStereo` gives its bond, one reference neighbor at each end, and
   `CIS` or `TRANS`. The order atoms or bonds are stored in never changes what
   an element means. Atropisomers and non-tetrahedral centers join the variant
