@@ -415,7 +415,7 @@ isotope.
 
 That default is load-bearing. Substructure search is isotope-blind today, so an
 acetic acid query matches the deuterated compound. Under a global D-is-heavy rule
-it would not, and a database search would silently lose deuterated analogues —
+it would not, and a database search would silently lose deuterated analogs —
 false negatives with no error raised, on exactly the compounds a deuterated-drug
 program cares about.
 

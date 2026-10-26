@@ -97,7 +97,7 @@ using Properties = std::map<std::string, PropertyValue, std::less<>>;
 // Stereo: elements name their reference atoms, so storage order of neighbors
 // or bonds never changes their meaning.
 
-enum class Chirality : std::uint8_t { CLOCKWISE, ANTICLOCKWISE };
+enum class Chirality : std::uint8_t { CLOCKWISE, COUNTERCLOCKWISE };
 
 struct TetrahedralStereo {
   AtomIndex center{};
