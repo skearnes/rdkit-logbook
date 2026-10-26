@@ -74,9 +74,10 @@ The existing bindings stall for three reasons, and the design answers each:
 ## Non-goals
 
 - Reimplementing any RDKit algorithm in Rust.
-- The pure-Python parts of the `rdkit` package, such as `PandasTools` and the
-  `rdkit.Chem.Draw` helpers. Scope is what the compiled nanobind modules
-  expose. *(My call, reading "what the Python wrappers cover" as the wrappers.)*
+- Functionality the `rdkit` package offers only in Python, such as
+  `PandasTools` and the `rdkit.Chem.Draw` helpers. Scope is what the compiled
+  nanobind modules expose. *(My call, reading "what the Python wrappers
+  cover" as the wrappers.)*
 - A redesigned, idiomatic Rust API. The redesign is `rdkit.v3`, whose
   [molecule API](../2026-10-17-rdkit-v3-mol/README.md) is shaped for mechanical
   binding; binding it is later work.
