@@ -3,7 +3,7 @@
 - **Date:** 2026-10-26
 - **Author:** Steven Kearnes
 - **Acknowledgments:** Prepared with [Claude Code](https://claude.com/claude-code)
-- **Status:** final (report; release pending)
+- **Status:** final (report; released as 2026.9.0)
 - **Tags:** rdkit, rust, bindings, cxx, safety, threads, report
 - **License:** [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)
 
@@ -39,9 +39,8 @@ protocol hooks
 Five sessions ported them in parallel, and the ports found bugs in RDKit's
 Python modules too.
 
-The crate is not yet released. The first release, 2026.9.0, is prepared on
-`main` and waits on running the release workflow; the `rdkit-cxx` name on
-crates.io is held by a 0.0.0 placeholder.
+The first release, [2026.9.0](https://crates.io/crates/rdkit-cxx/2026.9.0),
+is on crates.io; the 0.0.0 placeholder that held the name is yanked.
 
 ## What exists
 
@@ -267,16 +266,13 @@ The first release, 2026.9.0, documents the known limitation rather than wait
 for an upstream fix. Its pull request
 ([rdkit-cxx#62](https://github.com/skearnes/rdkit-cxx/pull/62)) removes
 `publish = false`, describes the ports in the crate's description and README,
-and adds a changelog. What remains:
-
-- The release workflow (run by hand) tests the release commit, publishes
-  through crates.io's trusted publishing, and tags the release. It has not been
-  run.
-- The packaged crate is 1.7 MiB.
+and adds a changelog. The release workflow, run by hand on 2026-10-26, tested
+the release commit, published it through crates.io's trusted publishing, and
+tagged it `v2026.9.0`. The packaged crate is 1.8 MiB. The 0.0.0 placeholder
+that held the name is yanked.
 
 ## Next steps
 
-- Run the release workflow for 2026.9.0.
 - Report the RDKit bugs upstream, starting with the memory-safety ones, and
   open the drafted Ctrl-C fix (`skearnes/rdkit`, branch
   `thread-safe-controlc`). Report the Python modules' bugs as well.
