@@ -52,7 +52,7 @@ crates.io is held by a 0.0.0 placeholder.
 | Recorded reasons | 572: 494 Python-only (protocol methods, Boost.Python's container and stream types, Python callbacks), 52 unbound for safety, 14 deprecated, 12 that serve only unbound names |
 | Python modules | 2,607 names in RDKit's Python (`.py`) modules: 1,016 ported; 150 with a reason of their own; 1,441 through 35 module reasons (`sping` alone is 726) |
 | Code | About 88,000 lines of Rust in `src/`, 46,000 of C++ in `wrapper/` (not counting vendored headers), and 69,000 of tests in 156 files |
-| Tests | 1,292 tests in 158 targets, many ported from RDKit's Python tests and checked against its Python output |
+| Tests | 1,335 tests in 158 targets, many ported from RDKit's Python tests and checked against its Python output |
 | CI | Linux x86-64, Linux arm64, and macOS arm64; a race check under Valgrind's DRD; pre-commit; docs built without RDKit; packaging |
 
 The manifest that maps each name is checked in CI: an unmapped name fails the
@@ -140,7 +140,7 @@ the whole process by the Ctrl-C lock.
 Before the first release, four cloud sessions reviewed the crate in parallel,
 each from one side, and reported to the session that built it. The fixes are
 in [rdkit-cxx#65](https://github.com/skearnes/rdkit-cxx/pull/65) through
-[#71](https://github.com/skearnes/rdkit-cxx/pull/71):
+[#73](https://github.com/skearnes/rdkit-cxx/pull/73):
 
 - **Soundness.** A reviewer looked for undefined behavior reachable from
   safe Rust, with memcheck and mutated inputs. It found that molecule
@@ -166,11 +166,13 @@ in [rdkit-cxx#65](https://github.com/skearnes/rdkit-cxx/pull/65) through
   binding does, rounds drawing colors through `f32` as Python's converters
   do, and orders `TopNContainer` as Python's `bisect` does after a NaN. It
   also found similarity maps' per-atom weights growing much faster than
-  Python's with the number of atoms.
+  Python's with the number of atoms; they now reuse each probe's full
+  fingerprint, as Python does.
 
 The differential reviewer ran against conda-forge's Python RDKit, which is
 built with Boost.Python, while the crate mirrored the nanobind wrappers, which
-no package ships yet. So the reference moved to Boost.Python's wrappers:
+no package ships yet. So the reference moved to Boost.Python's wrappers
+([rdkit-cxx#73](https://github.com/skearnes/rdkit-cxx/pull/73)):
 
 - **The inventory** now reads Boost.Python's modules (its functions, docstring
   signatures, and enums), leaving out its generic `__reduce__`. The manifest
