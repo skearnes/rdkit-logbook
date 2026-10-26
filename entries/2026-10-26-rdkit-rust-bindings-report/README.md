@@ -25,11 +25,19 @@ cheaply (see [Known limitations](#known-limitations)). Along the way the work
 turned up dozens of defects in RDKit itself, listed in
 [RDKit bugs found](assets/RDKIT_BUGS.md); none has been reported upstream yet.
 
-The crate is not yet released. The first release will also port the
-pure-Python parts of the `rdkit` package that make sense in Rust, so that it
-covers most of what RDKit offers from Python, not only the compiled modules.
-The release workflow is ready, and the `rdkit-cxx` name on crates.io is held
-by a 0.0.0 placeholder.
+The crate also ports much of the functionality RDKit currently offers only
+in Python, measured the same way. Of the 2,605 names RDKit's Python modules
+define, 1,017 are ported, and the ports compute what Python computes. Each of
+the rest has a recorded reason: Python-ecosystem glue, legacy code whose
+replacement is bound, deprecated code, command-line plumbing, or Python
+protocol hooks
+(see [Ports of Python-only functionality](#ports-of-python-only-functionality)).
+Five sessions ported them in parallel, and the ports found bugs in RDKit's
+Python modules too.
+
+The crate is not yet released. The first release, 2026.9.0, is ready in a
+pull request and waits on running the release workflow; the `rdkit-cxx` name
+on crates.io is held by a 0.0.0 placeholder.
 
 ## What exists
 
@@ -38,8 +46,9 @@ by a 0.0.0 placeholder.
 | Inventory | 3,910 names in RDKit's 64 nanobind modules (1,655 methods, 756 functions, 626 properties, 383 enum and flag values, 309 classes, 181 module attributes) |
 | Bound | 3,478 |
 | Recorded reasons | 432: 355 Python-only (protocol methods, nanobind's container types, Python callbacks), 52 unbound for safety, 13 deprecated, 12 that serve only unbound names |
-| Code | About 55,000 lines of Rust in `src/`, 45,000 of C++ in `wrapper/` (not counting vendored headers), and 39,000 of tests in 103 files |
-| Tests | 971 tests in 106 targets, many ported from RDKit's Python tests and checked against its Python output |
+| Python modules | 2,605 names in RDKit's Python (`.py`) modules: 1,017 ported; 150 with a reason of their own; 1,438 through 35 module reasons (`sping` alone is 726) |
+| Code | About 86,000 lines of Rust in `src/`, 45,000 of C++ in `wrapper/` (not counting vendored headers), and 68,000 of tests in 156 files |
+| Tests | 1,292 tests in 158 targets, many ported from RDKit's Python tests and checked against its Python output |
 | CI | Linux x86-64, Linux arm64, and macOS arm64; a race check under Valgrind's DRD; pre-commit; docs built without RDKit; packaging |
 
 The manifest that maps each name is checked in CI: an unmapped name fails the
@@ -145,42 +154,68 @@ Other open items:
   process but cannot corrupt memory: an SLN string with a `{` followed by
   about 100,000 characters (RDKit's regex), and SMILES of very deep molecules
   on small thread stacks.
-- **To fix before release.** The extended-query and R-group decomposition
-  paths call RDKit's enumerator without the crate's enumeration checks,
+- **Fixed before release.** The extended-query and R-group decomposition
+  paths now run the crate's enumeration checks before RDKit's enumerator,
   including its limit of 4,000 variation points, and `MultithreadedMolSupplier`
-  can start up to `INT_MAX` writer threads.
+  starts at most 1,024 writer threads.
 - **Windows.** Unsupported: conda-forge's layout and MSVC need their own
   build-script and CI work, and the clustering bindings assume a 64-bit
   `long`.
 
+## Ports of Python-only functionality
+
+The design left RDKit's Python modules out of scope. They were ported after
+parity so that the first release covers much of what RDKit offers from
+Python, not only the compiled modules:
+
+- **Measured like the bindings.** `inventory.py --python` reads each `.py`
+  module under `rdkit/` (without its tests) and lists the public names it
+  defines, 2,605 in all. Each gets a manifest entry, ported or with a reason.
+  Glue and legacy code takes one reason for its whole module, and
+  `check.py --strict` fails on any module that is neither complete nor
+  covered by a reason.
+- **Ported on the bindings.** Each port calls the bound API and computes
+  what Python computes. Where a result depends on Python itself, the crate
+  reproduces it: Python's Mersenne Twister and its seeding, draw for draw;
+  NumPy's pairwise summation; the shortest `repr` of a float. The modules'
+  Python tests and doctests are ported with them, with expected values from
+  RDKit 2026.09.1.
+- **In parallel.** Five cloud sessions each owned one group of modules:
+  descriptors; chemistry utilities (BRICS, Recap, MolKey, scaffolds,
+  enumeration); fingerprints and pharmacophores; `Draw`; and machine
+  learning and data structures. They worked in seven pull requests and
+  changed the shared manifest only through `manifest_add.py`, which merges
+  entries into it, so their pull requests merged without losing each
+  other's entries.
+- **Not ported.** Python-ecosystem glue (`PandasTools`, `IPythonConsole`,
+  PyMOL and Windows COM drivers), legacy code whose replacement is bound
+  (`sping`, the old `MolDrawing`, the MCS search in `fmcs`), and code RDKit
+  deprecates (the `Chem.Fingerprints` package, `PropertyMol`,
+  `FastSDMolSupplier`), each with a reason that names the replacement.
+
+Several Python functions are broken in RDKit 2026.09.1, mostly under NumPy 2
+or Python 3. The ports implement what they intend, and
+[RDKit bugs found](assets/RDKIT_BUGS.md#rdkits-python-modules) lists them.
+
 ## Release status
 
-The first release, 2026.9.0, waits for the pure-Python ports and the two fixes
-above. It will document the two known limitations rather than wait for
-upstream fixes. The mechanics are ready:
+The first release, 2026.9.0, documents the two known limitations rather than
+wait for upstream fixes. Its pull request
+([rdkit-cxx#62](https://github.com/skearnes/rdkit-cxx/pull/62)) removes
+`publish = false`, describes the ports in the crate's description and README,
+and adds a changelog. What remains:
 
-- `Cargo.toml` still sets `publish = false`, which the release workflow's dry
-  run refuses, and the README's status line predates parity.
 - The release workflow (run by hand) tests the release commit, publishes
   through crates.io's trusted publishing, and tags the release. It has not been
   run.
-- The packaged crate is 1.2 MiB.
+- The packaged crate is 1.7 MiB.
 
 ## Next steps
 
-- Port the pure-Python parts of the `rdkit` package, which the design left out
-  of scope. Measure them with the same inventory and manifest, so each public
-  name gets a port or a recorded reason. Code that is Python-ecosystem glue
-  (`PandasTools`, `IPythonConsole`) or legacy (`sping`, `Dbase`) gets reasons.
-  The first ports have landed with the RDKit Cookbook's examples:
-  `RegistrationHash`, `Lipinski`, `FindMolChiralCenters`, and the parts of
-  `Draw` the recipes use.
-- Fix the enumeration checks and the supplier's thread count, then remove
-  `publish = false`, update the README, document the known limitations, and
-  run the release workflow.
+- Run the release workflow for 2026.9.0.
 - Report the RDKit bugs upstream, starting with the memory-safety ones, and
   open the drafted Ctrl-C fix (`skearnes/rdkit`, branch
-  `thread-safe-controlc`).
+  `thread-safe-controlc`). Report the Python modules' bugs as well.
 - Ask upstream for atomic log flags and a checked cast in `MolPickler`, then
   drop the two limitations.
 - Windows support.

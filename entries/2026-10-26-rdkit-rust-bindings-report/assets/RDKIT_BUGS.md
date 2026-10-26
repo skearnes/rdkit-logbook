@@ -1,4 +1,4 @@
-# RDKit bugs found while binding rdkit-cxx
+# RDKit bugs found while writing rdkit-cxx
 
 - **Date:** 2026-10-26
 - **Author:** Steven Kearnes
@@ -11,7 +11,8 @@ RDKit's Python wrappers. None has been reported upstream yet. The crate guards
 against each one with a check, a lock, or by leaving the name unbound, as
 described in each entry.
 
-This page collects what was recorded while binding. The wrapper's comments are
+This page collects what was recorded while binding, and, in the last section,
+while porting RDKit's Python modules. The wrapper's comments are
 the full record: every check in `wrapper/src` says what RDKit would do without
 it, and every unbound name's entry in `inventory/manifest.toml` gives the
 reason and, where there is one, the crash in Python that confirmed it. Many
@@ -98,6 +99,14 @@ a size it computes in `int`.
   dangling. `GetAtomMatch` indexes a `vector<bool>(maxAts)` without a bounds
   check (`Code/GraphMol/MolChemicalFeatures/nbWrap`). *Crate:* its own
   bindings avoid both.
+- **The property-table descriptors read outside their tables**
+  (`Code/GraphMol/Descriptors/MolData3Ddescriptors.cpp`). `AUTOCORR2D`,
+  `AUTOCORR3D`, `RDF`, `MORSE`, `WHIM`, and `GETAWAY` look up atomic
+  properties by atomic number minus one in tables that cover 1 to 110, so a
+  dummy atom reads before the start and an atom past darmstadtium past the
+  end. In Python, `CalcAUTOCORR2D` of `CC*` returns values read from outside
+  the table. *Crate:* refuses such atoms unless a custom property is given,
+  so the descriptor calculators give NaN for them.
 - **`ROMol*` cast to `RWMol*`.** `removeQueryAtoms` and
   `generateIsomerConformers` `reinterpret_cast` one to the other. That is
   formally undefined, though the layouts are compatible.
@@ -231,3 +240,44 @@ in many calls, and C++ and Rust callers have no such lock.
 - **ACS 1996 drawing** sets its options from the mean bond length unchecked,
   so tiny bonds make the scale huge. *Crate:* checks the options it sets
   before drawing.
+
+## RDKit's Python modules
+
+Porting the Python modules turned up functions that fail in RDKit 2026.09.1
+with conda-forge's Python 3.12 and NumPy 2, or that return something other
+than what they say. *Crate:* each port computes what the function means to,
+and its documentation says how Python differs.
+
+- **`ML.InfoTheory.BitRank`** makes arrays of the abstract
+  `numpy.integer`, which NumPy 2 refuses, so `FormCounts`, `CalcInfoGains`,
+  and `RankBits` raise `TypeError`. `AnalyzeSparseVects` also calls a
+  `GetSize` that sparse bit vectors do not have.
+- **`ML.Data.Stats.StandardizeMatrix`** takes `math.sqrt` of an array of
+  deviations, which raises `TypeError` for any two-dimensional matrix; only
+  one-dimensional vectors work.
+- **`ML.Data.Stats.PrincipalComponents`** takes rows, not columns, of
+  LAPACK's matrix of eigenvectors, and picks them by each eigenvalue's place
+  in LAPACK's order, so the vectors it returns are not eigenvectors.
+- **`ML.Cluster.Resemblance`.** `EuclideanDistance` sizes its array with a
+  float, and `CalcMetricMatrix` hands the metric a `map` object, which has no
+  length. Both raise `TypeError`.
+- **`ML.files.ReadDataFile`** assigns a `map` object to a NumPy row and
+  raises `TypeError`.
+- **`RDRandom.shuffle(x)`** without its `random` argument reads a
+  `random._randbelow` that Python 3.12 does not have.
+- **`Chem.SupplierFromFilename`** passes its delimiter to `TDTMolSupplier`,
+  which takes none, so it fails for every `.tdt` file.
+- **`Chem.FragmentCatalog`.** `ProcessGainsFile` calls a file's Python 2
+  `xreadlines`, so it always fails, and `BuildAdjacencyList` with
+  `orderLevels` raises `NameError`, since `argsort` is never imported.
+- **`Chem.BuildFragmentCatalog`.** `ShowDetails` calls
+  `FragCatalog.GetFragDescription`, which does not exist, so it raises
+  `AttributeError` for any gains. `ScoreMolecules` counts bit `id` in row
+  `id - 1`, so bit 0 lands in the last row (the port keeps this, since the
+  script's output depends on it).
+- **`Chem.ChemUtils.BulkTester`** calls `Randomize.CheckCanonicalization`,
+  which RDKit removed, so it fails every molecule that sanitizes, and calls
+  a supplier's Python 2 `next` method. *Crate:* not ported, with a reason.
+- **`UnitTestFunctionalGroups.test4Hs`** fails: it asserts that adding
+  hydrogens never changes a functional-group fingerprint, but they change
+  725 of the 4,978 in its data set.
