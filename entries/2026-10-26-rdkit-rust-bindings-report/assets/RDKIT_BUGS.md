@@ -1,0 +1,233 @@
+# RDKit bugs found while binding rdkit-cxx
+
+- **Date:** 2026-10-26
+- **Author:** Steven Kearnes
+- **Acknowledgments:** Prepared with [Claude Code](https://claude.com/claude-code)
+- **License:** [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)
+
+These are defects in RDKit `Release_2026_09_1` found while writing
+[rdkit-cxx](https://github.com/skearnes/rdkit-cxx). Most are reachable from
+RDKit's Python wrappers. None has been reported upstream yet. The crate guards
+against each one with a check, a lock, or by leaving the name unbound, as
+described in each entry.
+
+This page collects what was recorded while binding. The wrapper's comments are
+the full record: every check in `wrapper/src` says what RDKit would do without
+it, and every unbound name's entry in `inventory/manifest.toml` gives the
+reason and, where there is one, the crash in Python that confirmed it. Many
+smaller cases appear only there, such as RDKit trusting an index it is given or
+a size it computes in `int`.
+
+## Memory safety
+
+- **`RWMol::replaceBond` leaves stereo groups pointing at the freed bond**
+  (`Code/GraphMol/RWMol.cpp`). It deletes the bond it replaces but, unlike
+  `replaceAtom`, does not update the stereo groups that hold it, such as an
+  atropisomer's. Copying, pickling, or writing the molecule then reads freed
+  memory. Memcheck confirmed this in Python through `ReplaceBond` followed by
+  `ToBinary`, `AdjustQueryProperties` with generic bonds,
+  `CreateExtendedQueryMol` with tautomers, `SanitizeRxn`, and
+  `GenerateDepictionMatching2DStructure` with `allowRGroups`. *Crate:* its own
+  calls point the groups at the new bond, and RDKit's own calls run under a
+  guard that takes the bonds out of the groups and puts them back afterward
+  (rule U13).
+- **`EHTTools::runMol` reads `FILE`s it already closed**
+  (`External/YAeHMOP/EHTTools.cpp`). It `fclose`s its two temporary files,
+  then the `Tempfile` destructors call `fileno` and `fclose` on them again.
+  That is a use after free on every call (Valgrind reports the reads in
+  Python), and a double free once another thread reuses the descriptor.
+  *Crate:* `rdEHTTools` is unbound.
+- **InChI's own mol-file reader trusts its input.** `MolBlockToInchi` parses
+  with the InChI library's C reader (`MakeINCHIFromMolfileText`), not RDKit's,
+  and it segfaulted on 31 of 5,800 mutated V3000 blocks in Python (26 of them
+  reproduce alone). *Crate:* unbound; parse with `mol_from_mol_block` and call
+  `mol_to_inchi`.
+- **InChI options that corrupt the heap.** With `/OutputSDF /Key`,
+  `GetINCHI` `free()`s a pointer it never allocated (SIGABRT in Python).
+  *Crate:* only the 22 structure-perception options are accepted.
+- **The Avalon toolkit trusts its input** (`External/AvalonTools`, about
+  34,000 lines of C). Malformed SMILES such as `ClC(Cl)=C1=CC=CC..1` corrupt
+  its heap, and malformed mol blocks are read out of bounds (both crash
+  Python). Its layout and fingerprints go on after `SetupNeighbourhood` fails
+  for an atom of more than 20 bonds, having already written past that atom's
+  neighbor table; a sanitized molecule can have such an atom (a dummy atom with
+  24 neighbors). `nBits` 0 divides by zero. The structure checker reads through
+  a null `FILE*` when a file its options name does not open (`-ta /nonexistent`
+  segfaults). *Crate:* `pyAvalonTools` is unbound.
+- **`MaeMolSupplier` trusts maeparser's parse.** It dereferences a missing
+  bond-order key's end iterator, subtracts 1 from `INT_MIN`, and takes `back()`
+  of an empty token. *Crate:* unbound, since maeparser's headers, which a check
+  would need, are not installed.
+- **`FreeChemicalFeature::initFromString` reads past its buffers**
+  (`Code/ChemicalFeatures/FreeChemicalFeature.cpp`). It copies each string into
+  a buffer of the length the pickle gives, without checking how much it read,
+  then takes the string up to the first NUL. With no NUL, or a pickle that ends
+  early, that reads past the buffer or through bytes it never read. It also
+  throws a `const char *` for an unknown version, which no `std::exception`
+  handler catches. *Crate:* checks the pickle first.
+- **The JSON reader trusts indices and types**
+  (`Code/GraphMol/MolInterchange/Parser.cpp`). An AND, OR, or XOR query with
+  fewer than two children segfaults, a recursive query's matcher reads the
+  first atom of an empty subquery, and ring atoms can be out of range.
+  *Crate:* checks the JSON first.
+- **Abbreviations.** `applyMatches` overflows the bitset it marks atoms in, and
+  `parseAbbreviations` runs its token iterator past the end. *Crate:* checks.
+- **Enumeration.** Link nodes read `ps[0][0]` without checking that it exists
+  (the `ASSERT_INVARIANT` is compiled out), and repeat units use SRU indices
+  unchecked. *Crate:* checks as RDKit reads them.
+- **Synthon spaces.** A text read in place that fails leaves synthons without
+  molecules, and a later search segfaults. Negative synthon numbers, more than
+  four synthon sets, and an empty or all-dummy synthon (index -1) are
+  accepted. A search's possible hits dereference null for SMILES that do not
+  parse. *Crate:* checks.
+- **Drawing.**
+  - `addMetadataToPNG` compares the bytes of a PNG signature it failed to
+    read, which are uninitialized, when the Cairo surface is in an error state.
+  - The Cairo drawer draws free text to a null context.
+  - `getDrawCoords` indexes `drawMols_[activeMolIdx_]` unchecked.
+  - The JSON options parser (`get_rgba` in `MolDrawOptionsJSONParsers.cpp`)
+    reads past the end of a color with fewer than three components.
+  - `getWavyLineSegments` rounds an odd count up, which makes `UINT_MAX` zero
+    segments, and the drawers then read the first one.
+
+  *Crate:* checks each before drawing.
+- **Picking.** `MaxMinPicker` dereferences null when no distance is above -1.
+  *Crate:* checks.
+- **Python wrappers.** `MolChemicalFeatureFactory.GetMolFeature` keeps a
+  function-static feature list shared across threads, which leaves features
+  dangling. `GetAtomMatch` indexes a `vector<bool>(maxAts)` without a bounds
+  check (`Code/GraphMol/MolChemicalFeatures/nbWrap`). *Crate:* its own
+  bindings avoid both.
+- **`ROMol*` cast to `RWMol*`.** `removeQueryAtoms` and
+  `generateIsomerConformers` `reinterpret_cast` one to the other. That is
+  formally undefined, though the layouts are compatible.
+
+## Data races
+
+Python's global interpreter lock hides most of these, but RDKit releases it
+in many calls, and C++ and Rust callers have no such lock.
+
+- **Every substructure match races on the Ctrl-C handler**
+  (`Code/RDGeneral/ControlCHandler.h`). `vf2` constructs a `ControlCHandler`
+  for every match, and its constructor and destructor write the plain statics
+  `d_prev_handler` and `d_gotSignal`, which the match loop reads. Two threads
+  matching at once race on them, which can leave RDKit's `SIGINT` handler
+  installed, and a stale `d_gotSignal` stops later matches early. *Crate:*
+  `control_c_mutex()` is held around every call that can match. A fix to RDKit
+  is drafted on `skearnes/rdkit`, branch `thread-safe-controlc`: atomic
+  statics, and a handler installed on the first holder and restored by the
+  last.
+- **The log flags** (`Code/RDGeneral/RDLog.h`). `df_enabled` is a plain `bool`
+  that every `BOOST_LOG` reads. `RDLog::LogStateSetter` writes it inside RDKit
+  (`hasQueryHs` in `AddHs.cpp`, `prepareMolForDrawing`, deprotection, R-group
+  decomposition, link nodes, the embedder's torsion preferences), as do
+  `BlockLogs` and `enable_logs`/`disable_logs`. Its destructor also restores
+  the flags with an XOR of what its constructor changed, so setters that
+  overlap on two threads can restore the wrong state. *Crate:*
+  RDKit's own writers all run under `control_c_mutex()`, which orders them
+  with each other, but the race between a writer and the logging in other
+  threads is still open (see the report's Known limitations).
+- **The ChemDraw library's attribute maps**
+  (`InitAttributeMapsIfNeeded` in
+  `External/ChemDraw/chemdraw/chemdraw/CDXObject.cpp`). The maps are filled on
+  first use behind an `empty()` check made outside the lock, so a thread can
+  read a map another is still filling. The map of unknown tags is written with
+  no lock. This showed up in CI as wrong attribute names in CDXML (`attrib0805`
+  for `BondLength`) and was confirmed under DRD. *Crate:* `chemdraw_mutex()`.
+- **Murtagh's clustering** (`Code/ML/Cluster/Murtagh/hc.c`) keeps its work
+  variables in statics. *Crate:* `murtagh_mutex()`.
+- **Other process-wide state written without a lock:**
+  - the grid-index cache in `GridUtils.cpp`;
+  - the BRICS patterns, filled on first use;
+  - the descriptor property registry;
+  - `DCLV.cpp`'s `recordCache`;
+  - R-group decomposition's random number singleton and fingerprint-variance
+    static;
+  - the shape modules' pharmacophore patterns and PubChem shape's overlap
+    cutoffs;
+  - 2D depiction's settings and CoordGen's templates;
+  - the SMILES parser's debug level (`yysmiles_debug`);
+  - `std::rand` in comic-mode drawing.
+
+  *Crate:* a lock for each (rule U4). Calls that write the SMILES debug level
+  are `unsafe fn`s. CI checks the locks under Valgrind's DRD.
+
+## Undefined arithmetic and casts
+
+- **Molecule pickles: unchecked casts** (`Code/GraphMol/MolPickler.cpp`).
+  Enum values (bond type, direction, and stereo; chiral tag; hybridization;
+  stereo-group type) are cast without checks. *Crate:* refuses unknown values
+  after every read. In `_unpickleAtomData` an isotope is computed as
+  `static_cast<int>(floor(tmpFloat + mass))` from a float in the pickle, which
+  is undefined when the value does not fit in `int`. *Crate:* not guarded (see
+  the report's Known limitations).
+- **The ChemDraw writer's fixed-point coordinates.**
+  `CDXCoordinatefromPoints` (`CDXIO.h`) C-casts each coordinate to 32-bit fixed
+  point, which is undefined when the value is not finite or does not fit. In 2D
+  it first scales by 28.8 over the mean bond length, which is NaN for a
+  molecule without bonds and infinite when the bonds have no length. *Crate:*
+  checks the values first.
+- **Synthon-space progress bar.** `ProgressBar.h` converts its projected finish
+  to integer nanoseconds with `duration_cast`, which overflows past 2^63 ns.
+  *Crate:* the bar is not bound.
+- **Synthon-space shape search.** `alignDummies` computes a sine as
+  `sqrt(1 - cos^2)`, NaN when rounding puts the cosine past 1, and
+  `GaussianShape::AlignShape` then returns its best score uninitialized.
+  *Crate:* `ShapeSearch` is not bound.
+- **Pickers.** `MaxMinPicker`'s work array wraps (unsigned) at 2^28 items.
+  `getDistFromLTM` (`DistPicker.cpp`) wraps past 65,537 items. *Crate:*
+  refuses those sizes.
+- **Information theory** (`Code/ML/InfoTheory`). `ChiSquare` and
+  `InfoEntropyGain` truncate the matrix's totals to `int`. `getTopN(0)`
+  compares against the top of an empty queue. *Crate:* checks.
+- **Division by zero.** `MetricMatrixCalc` divides by zero (SIGFPE in Python)
+  for a fingerprint with no bits, and so does R-group decomposition for a chunk
+  size of 0. *Crate:* checks.
+- **Drawing.** `DrawShapeArc::myDraw` steps its angles in `int` (undefined for
+  NaN), and the SVG drawer converts contour colors that an infinite grid value
+  makes NaN to `int`. *Crate:* checks.
+- **The InChI writer narrows silently** (`External/INCHI-API/inchi.cpp`).
+  Molecules of more than 32,766 atoms return an empty string, an isotope of
+  70,000 becomes a wrong `/i` layer, and 256 explicit hydrogens become `CH4`.
+  *Crate:* refuses atoms, isotopes, and hydrogen counts that do not fit.
+
+## Hangs and stack overflows
+
+- **Substance-group `PARENT` cycles.** Whenever RDKit removes atoms or bonds,
+  it follows the substance groups' `PARENT` chains with no check for a cycle,
+  and it parses every bond's `_MolFileBondEndPts` without checks. The SMILES
+  writer removes atoms from copies to split fragments, so `MolToSmiles` of a
+  two-fragment molecule with a `PARENT` cycle hangs in Python; a CXSMILES `SgH`
+  cycle alone does it. *Crate:* every wrapper whose RDKit call removes atoms or
+  bonds checks first (rule P2).
+- **Comic-mode drawing.** `handdrawnLine` (`MolDraw2DDetails.cpp`) shrinks its
+  wiggles until they are small next to the line's steps, which never ends for a
+  step of no length. *Crate:* refuses such lines.
+- **Atom labels.** `AtomSymbol::adjustColons` strips `<...>` in a loop that
+  never ends once a `>` comes before the next `<`. *Crate:* checks labels.
+- **SMILES files whose stream reports its position but cannot seek.**
+  `SmilesMolSupplier` loops forever after a failed seek, since `skipComments`
+  stops only at end of file or `badbit`. *Crate:* reads gzipped files through
+  a stream that fails every seek and tell, as RDKit's own `gzstream` does.
+- **SLN macros.** `replaceSLNMacroAtoms` (`SLNParse.cpp`) runs `std::regex`
+  `\{(.+?):(.+?)\}` over its input, and libstdc++'s recursive executor
+  overflows the stack when a `{` is followed by about 100,000 characters (a
+  segfault in Python). *Crate:* documented as an abort.
+- **Deep SMILES.** `MolToSmiles` overflows a 2 MiB thread stack on a chain of
+  about 16,000 atoms.
+- **`LeaderPicker` threads.** `pthread_create`'s result is unchecked, and an
+  exception in a worker thread calls `std::terminate`. *Crate:* runs the picks
+  on the calling thread.
+
+## Wrong results
+
+- **`ExtendedQueryMol::toBinary`** stores the number of tautomer queries in 16
+  bits: a bundle of 65,537 round-trips as 1. *Crate:* refuses more than
+  65,535.
+- **`InfoBitRanker::setBiasList`** keeps the list before checking it, so a list
+  it refuses still takes effect. *Crate:* checks first.
+- **`DrawAttachmentLine`** passes `rawCoords` where `drawWavyLine` takes its
+  vertical offset.
+- **ACS 1996 drawing** sets its options from the mean bond length unchecked,
+  so tiny bonds make the scale huge. *Crate:* checks the options it sets
+  before drawing.
