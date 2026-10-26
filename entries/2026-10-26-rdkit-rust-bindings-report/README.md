@@ -11,23 +11,27 @@
 
 The crate from the [design entry](../2026-10-24-rdkit-rust-bindings/README.md)
 now exists: [skearnes/rdkit-cxx](https://github.com/skearnes/rdkit-cxx) binds
-RDKit's C++ API with the coverage of its nanobind Python wrappers. Every one of
-the 3,910 names those wrappers expose in RDKit 2026.09.1 has a Rust counterpart
-or a recorded reason it has none. It took 46 pull requests, from 2026-10-24 to
-2026-10-26, following the [core slice plan](../2026-10-24-rdkit-rust-bindings/assets/CORE_SLICE_PLAN.md)
-and then binding module by module.
+RDKit's C++ API with the coverage of its Python wrappers, as conda-forge builds
+them with Boost.Python. Every one of the 4,039 names those wrappers expose in
+RDKit 2026.09.1 has a Rust counterpart or a recorded reason it has none. It
+took about 70 pull requests, from 2026-10-24 to 2026-10-26, following the
+[core slice plan](../2026-10-24-rdkit-rust-bindings/assets/CORE_SLICE_PLAN.md),
+then binding module by module, porting the Python modules, and a pre-release
+review. The bindings first mirrored RDKit's nanobind wrappers; the review
+moved the reference to Boost.Python's, since no package ships the nanobind
+ones yet (see [Pre-release review](#pre-release-review)).
 
 The design's hardest goal was that no safe Rust can reach undefined behavior,
 even where RDKit's Python wrappers can. Holding to it meant checking much of
 what RDKit trusts, locking the global state it writes without locks, and
-leaving 52 names unbound. Two gaps remain that the wrappers cannot close
+leaving 52 names unbound. One gap remains that the wrappers cannot close
 cheaply (see [Known limitations](#known-limitations)). Along the way the work
 turned up dozens of defects in RDKit itself, listed in
 [RDKit bugs found](assets/RDKIT_BUGS.md); none has been reported upstream yet.
 
 The crate also ports much of the functionality RDKit currently offers only
-in Python, measured the same way. Of the 2,605 names RDKit's Python modules
-define, 1,017 are ported, and the ports compute what Python computes. Each of
+in Python, measured the same way. Of the 2,607 names RDKit's Python modules
+define, 1,016 are ported, and the ports compute what Python computes. Each of
 the rest has a recorded reason: Python-ecosystem glue, legacy code whose
 replacement is bound, deprecated code, command-line plumbing, or Python
 protocol hooks
@@ -35,19 +39,19 @@ protocol hooks
 Five sessions ported them in parallel, and the ports found bugs in RDKit's
 Python modules too.
 
-The crate is not yet released. The first release, 2026.9.0, is ready in a
-pull request and waits on running the release workflow; the `rdkit-cxx` name
-on crates.io is held by a 0.0.0 placeholder.
+The crate is not yet released. The first release, 2026.9.0, is prepared on
+`main` and waits on running the release workflow; the `rdkit-cxx` name on
+crates.io is held by a 0.0.0 placeholder.
 
 ## What exists
 
 | | |
 | --- | --- |
-| Inventory | 3,910 names in RDKit's 64 nanobind modules (1,655 methods, 756 functions, 626 properties, 383 enum and flag values, 309 classes, 181 module attributes) |
-| Bound | 3,478 |
-| Recorded reasons | 432: 355 Python-only (protocol methods, nanobind's container types, Python callbacks), 52 unbound for safety, 13 deprecated, 12 that serve only unbound names |
-| Python modules | 2,605 names in RDKit's Python (`.py`) modules: 1,017 ported; 150 with a reason of their own; 1,438 through 35 module reasons (`sping` alone is 726) |
-| Code | About 86,000 lines of Rust in `src/`, 45,000 of C++ in `wrapper/` (not counting vendored headers), and 68,000 of tests in 156 files |
+| Inventory | 4,039 names in RDKit's 63 Boost.Python modules (1,780 methods, 760 functions, 629 properties, 380 enum values, 315 classes, 167 module attributes, 8 static methods) |
+| Bound | 3,467 |
+| Recorded reasons | 572: 494 Python-only (protocol methods, Boost.Python's container and stream types, Python callbacks), 52 unbound for safety, 14 deprecated, 12 that serve only unbound names |
+| Python modules | 2,607 names in RDKit's Python (`.py`) modules: 1,016 ported; 150 with a reason of their own; 1,441 through 35 module reasons (`sping` alone is 726) |
+| Code | About 88,000 lines of Rust in `src/`, 46,000 of C++ in `wrapper/` (not counting vendored headers), and 69,000 of tests in 156 files |
 | Tests | 1,292 tests in 158 targets, many ported from RDKit's Python tests and checked against its Python output |
 | CI | Linux x86-64, Linux arm64, and macOS arm64; a race check under Valgrind's DRD; pre-commit; docs built without RDKit; packaging |
 
@@ -104,9 +108,11 @@ through. The crate's rules (in its `CONVENTIONS.md`) handle them in a few ways:
   formats (bit-vector, grid, and catalog pickles, FPB files, PNG chunks) are
   checked before RDKit reads them. Boost.Serialization archives cannot be
   checked, so their readers are `unsafe fn`s whose contract is "bytes RDKit
-  wrote". There are 16 `unsafe fn`s in all. The rest are parsers that write
-  the SMILES parser's unlocked debug level, the synthon-space database reader,
-  and setters for settings RDKit keeps in environment variables.
+  wrote". So are the readers of molecule pickles and of the formats that carry
+  them, since RDKit trusts much of what a pickle says. There are 42 `unsafe
+  fn`s in all. The rest are parsers that write the SMILES parser's unlocked
+  debug level, the synthon-space database reader, and setters for settings
+  RDKit keeps in environment variables.
 - **Lock global state.** RDKit writes some process-wide state with no lock:
   the random number generator, 2D depiction settings, the BRICS patterns, the
   ChemDraw library's attribute maps, Murtagh clustering's statics, and others.
@@ -129,10 +135,66 @@ hierarchy across molecules that RDKit would handle, or an InChI option outside
 the structure-perception set. Substructure matching is also serialized across
 the whole process by the Ctrl-C lock.
 
+## Pre-release review
+
+Before the first release, four cloud sessions reviewed the crate in parallel,
+each from one side, and reported to the session that built it. The fixes are
+in [rdkit-cxx#65](https://github.com/skearnes/rdkit-cxx/pull/65) through
+[#71](https://github.com/skearnes/rdkit-cxx/pull/71):
+
+- **Soundness.** A reviewer looked for undefined behavior reachable from
+  safe Rust, with memcheck and mutated inputs. It found that molecule
+  pickles RDKit did not write reach undefined behavior however much the
+  wrappers check, since `MolPickler` trusts much of what a pickle says, so
+  their readers became `unsafe fn`s. It also found uninitialized reads in
+  Eigen's solvers for coordinates that are not finite, uninitialized
+  neighbor indices passed to InChI, unchecked `Read` counts, conformer ids
+  that overflow, and hangs and unbounded allocations from small inputs
+  (feature definitions, comic-mode drawing, ChemDraw atom maps, InChI
+  hydrogen counts).
+- **API.** A reviewer checked names, signatures, defaults, and docs against
+  the conventions and fixed what it found itself.
+- **Build and licensing.** A reviewer checked the build script, the vendored
+  RDKit headers, and the package contents. The build now refuses headers that
+  differ from the vendored copies, and passes paths to Cargo and CMake only
+  as checked text.
+- **Differential testing.** A reviewer ran the Python ports and Python
+  RDKit side by side on generated inputs (11,700 cases in machine learning
+  and data structures alone, and 800 molecules through each drawing
+  function) and found 11 differences. The crate now raises where Python
+  raises in RIE and BEDROC, reads Murtagh clustering's data as conda-forge's
+  binding does, rounds drawing colors through `f32` as Python's converters
+  do, and orders `TopNContainer` as Python's `bisect` does after a NaN. It
+  also found similarity maps' per-atom weights growing much faster than
+  Python's with the number of atoms.
+
+The differential reviewer ran against conda-forge's Python RDKit, which is
+built with Boost.Python, while the crate mirrored the nanobind wrappers, which
+no package ships yet. So the reference moved to Boost.Python's wrappers:
+
+- **The inventory** now reads Boost.Python's modules (its functions, docstring
+  signatures, and enums), leaving out its generic `__reduce__`. The manifest
+  gained reasons for Boost.Python's container and stream types and dropped
+  names only nanobind has (its exception classes, enum values exported to
+  modules, `__new__`).
+- **New bindings.** `rdkit.Chem.rdtrajectory`, which nanobind never built,
+  is bound (as Rust values, with RDKit's own AMBER and GROMOS readers), and so
+  are a few names only Boost.Python has.
+- **Defaults and names.** A source audit of both wrappers found one default
+  that differs (`StereoisomerEnumerator`'s `verbose`) and some keyword names;
+  the crate follows Boost.Python's. A second pass found that defaults shown
+  in Boost.Python's docstrings are not always the ones it uses: registrations
+  through `BOOST_PYTHON_FUNCTION_OVERLOADS` take the C++ function's defaults.
+- **Where Boost.Python is wrong,** the crate keeps RDKit's C++ behavior and
+  documents the difference: Boost.Python reads an empty list as `None` for
+  several arguments, crosses two of `CanonicalRankAtomsInFragment`'s options,
+  and binds a `PointND.Distance` that always raises
+  ([RDKit bugs found](assets/RDKIT_BUGS.md#rdkits-python-wrappers)).
+
 ## Known limitations
 
-Safe Rust can still reach undefined behavior in two ways. Neither corrupts
-memory on the supported platforms, and neither can be closed in the wrappers
+Safe Rust can still reach undefined behavior in one way. It does not corrupt
+memory on the supported platforms, and it cannot be closed in the wrappers
 without disproportionate cost:
 
 - **RDKit's log flags race.** Each logger's enabled flag is a plain `bool` that
@@ -142,11 +204,11 @@ without disproportionate cost:
   once can race on it. The crate orders RDKit's own writers with each other,
   but closing the race would mean locking every RDKit call. The fix belongs
   upstream: make the flag a `std::atomic<bool>`.
-- **A float cast in molecule pickles.** `MolPickler` computes an isotope as
-  `static_cast<int>(floor(tmpFloat + mass))` from a float in the pickle, which
-  is undefined for a value that does not fit in `int`. Checking it from outside
-  would mean parsing the pickle format in the wrapper. The fix belongs
-  upstream: a range check before the cast.
+
+Molecule pickles are read only by `unsafe fn`s, whose contract is a pickle
+RDKit wrote: `MolPickler` trusts more of a pickle than a wrapper can check,
+such as a query's class and matching function, and an isotope it casts to
+`int` from a float.
 
 Other open items:
 
@@ -199,8 +261,8 @@ or Python 3. The ports implement what they intend, and
 
 ## Release status
 
-The first release, 2026.9.0, documents the two known limitations rather than
-wait for upstream fixes. Its pull request
+The first release, 2026.9.0, documents the known limitation rather than wait
+for an upstream fix. Its pull request
 ([rdkit-cxx#62](https://github.com/skearnes/rdkit-cxx/pull/62)) removes
 `publish = false`, describes the ports in the crate's description and README,
 and adds a changelog. What remains:
@@ -216,6 +278,8 @@ and adds a changelog. What remains:
 - Report the RDKit bugs upstream, starting with the memory-safety ones, and
   open the drafted Ctrl-C fix (`skearnes/rdkit`, branch
   `thread-safe-controlc`). Report the Python modules' bugs as well.
-- Ask upstream for atomic log flags and a checked cast in `MolPickler`, then
-  drop the two limitations.
+- Ask upstream for atomic log flags, then drop the limitation, and for
+  checks in `MolPickler`, so that its readers can be safe.
+- Report the Boost.Python wrappers' mistakes, and move the reference to the
+  nanobind wrappers once a package ships them.
 - Windows support.
