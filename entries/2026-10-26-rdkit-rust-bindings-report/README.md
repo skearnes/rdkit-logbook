@@ -172,8 +172,9 @@ upstream fixes. The mechanics are ready:
   of scope. Measure them with the same inventory and manifest, so each public
   name gets a port or a recorded reason. Code that is Python-ecosystem glue
   (`PandasTools`, `IPythonConsole`) or legacy (`sping`, `Dbase`) gets reasons.
-  A draft pull request already ports the RDKit Cookbook along with
-  `RegistrationHash`, `Lipinski`, and parts of `Draw`.
+  The first ports have landed with the RDKit Cookbook's examples:
+  `RegistrationHash`, `Lipinski`, `FindMolChiralCenters`, and the parts of
+  `Draw` the recipes use.
 - Fix the enumeration checks and the supplier's thread count, then remove
   `publish = false`, update the README, document the known limitations, and
   run the release workflow.
